@@ -2,10 +2,10 @@ import {AbortSignal} from "@chainsafe/abort-controller";
 import {phase0, Slot, allForks, RootHex} from "@chainsafe/lodestar-types";
 import {IForkChoice} from "@chainsafe/lodestar-fork-choice";
 import {CachedBeaconState, computeEpochAtSlot} from "@chainsafe/lodestar-beacon-state-transition";
-import {CheckpointStateCache, StateContextCache, toCheckpointHex} from "../stateCache";
+import {CheckpointHex, CheckpointStateCache, StateContextCache, toCheckpointHex} from "../stateCache";
 import {IMetrics} from "../../metrics";
 import {JobItemQueue} from "../../util/queue";
-import {IStateRegenerator, RegenCaller, RegenFnName} from "./interface";
+import {IStateRegenerator, IStateRegeneratorInternal, RegenCaller, RegenFnName} from "./interface";
 import {StateRegenerator, RegenModules} from "./regen";
 import {RegenError, RegenErrorCode} from "./errors";
 import {toHexString} from "@chainsafe/ssz";
@@ -16,8 +16,8 @@ type QueuedStateRegeneratorModules = RegenModules & {
   signal: AbortSignal;
 };
 
-type RegenRequestKey = keyof IStateRegenerator;
-type RegenRequestByKey = {[K in RegenRequestKey]: {key: K; args: Parameters<IStateRegenerator[K]>}};
+type RegenRequestKey = keyof IStateRegeneratorInternal;
+type RegenRequestByKey = {[K in RegenRequestKey]: {key: K; args: Parameters<IStateRegeneratorInternal[K]>}};
 export type RegenRequest = RegenRequestByKey[RegenRequestKey];
 
 /**
@@ -127,6 +127,14 @@ export class QueuedStateRegenerator implements IStateRegenerator {
     }
     // The state is not immediately available in the cache, enqueue the job
     return this.jobQueue.push({key: "getState", args: [stateRoot, rCaller]});
+  }
+
+  addPostState(postState: CachedBeaconState<allForks.BeaconState>): void {
+    this.stateCache.add(postState);
+  }
+
+  getCheckpointStateSync(cp: CheckpointHex): CachedBeaconState<allForks.BeaconState> | null {
+    return this.checkpointStateCache.get(cp);
   }
 
   private jobQueueProcessor = async (regenRequest: RegenRequest): Promise<CachedBeaconState<allForks.BeaconState>> => {
