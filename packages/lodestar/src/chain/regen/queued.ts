@@ -34,6 +34,7 @@ export class QueuedStateRegenerator implements IStateRegenerator {
   private checkpointStateCache: CheckpointStateCache;
   private metrics: IMetrics | null;
 
+  private headStateRootHex: string | null = null;
   private headState: CachedBeaconState<allForks.BeaconState> | null = null;
 
   constructor(modules: QueuedStateRegeneratorModules) {
@@ -132,20 +133,38 @@ export class QueuedStateRegenerator implements IStateRegenerator {
   }
 
   getHeadState(): CachedBeaconState<allForks.BeaconState> | null {
-    return this.headState;
+    return (
+      this.headState ||
+      // Fallback, check if head state is in cache
+      (this.headStateRootHex ? this.stateCache.get(this.headStateRootHex) : null)
+    );
   }
 
-  async setHead(head: IProtoBlock, potentialHeadState?: CachedBeaconState<allForks.BeaconState>): Promise<void> {
+  setHead(head: IProtoBlock, potentialHeadState?: CachedBeaconState<allForks.BeaconState>): void {
+    this.headStateRootHex = head.stateRoot;
+
     const headState =
       potentialHeadState && head.stateRoot === toHexString(potentialHeadState.hashTreeRoot())
         ? potentialHeadState
         : this.checkpointStateCache.getLatest(head.blockRoot, Infinity) || this.stateCache.get(head.stateRoot);
 
-    // TODO: Use regen to get the state if not available
-    // Almost always the headState should be in the cache since it should be from a block recently processed
-    if (!headState) throw Error(`Head state slot ${head.slot} root ${head.stateRoot} not available in caches`);
+    // State is available syncronously =D
+    // Note: almost always the headState should be in the cache since it should be from a block recently processed
+    if (headState) {
+      this.headState = headState;
+      return;
+    }
 
-    this.headState = headState;
+    this.headState = null;
+    this.getState(head.stateRoot, RegenCaller.produceBlock)
+      .then((state) => {
+        this.headState = state;
+      })
+      .catch((e) => {
+        throw Error(`Head state slot ${head.slot} root ${head.stateRoot} not available in caches`);
+      });
+    // TODO: Use regen to get the state if not available
+    if (!this.headState) throw Error(`Head state slot ${head.slot} root ${head.stateRoot} not available in caches`);
   }
 
   addPostState(postState: CachedBeaconState<allForks.BeaconState>): void {

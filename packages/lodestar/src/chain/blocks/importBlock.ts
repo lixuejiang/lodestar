@@ -118,6 +118,10 @@ export async function importBlock(chain: ImportBlockModules, fullyVerifiedBlock:
       chain.metrics?.forkChoiceReorg.inc();
     }
 
+    // MUST BE CALLED IF HEAD CHANGES !!! Otherwise the node will use the wrong state as head.
+    // Currently the cannonical head information is split between `forkChoice.getHead()` to get just a summary, and
+    // regen.getHeadState() to get the state of that head.
+    //
     // Set head state in regen. May trigger async regen if the state is not in a memory cache
     chain.regen.setHead(newHead, postState).catch((e) => {
       chain.logger.error("Error setting head state", {slot: newHead.slot, stateRoot: newHead.stateRoot}, e);
