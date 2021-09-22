@@ -137,6 +137,14 @@ export class BeaconChain implements IBeaconChain {
       metrics,
       signal,
     });
+
+    // On start, the initial anchor state is added to the state cache + the forkchoice.
+    // Since this state and its block is the only one in the forkchoice, it becomes the head.
+    const head = forkChoice.getHead();
+    regen.setHead(head, cachedState).catch((e) => {
+      this.logger.error("Error setting head state on start", {slot: head.slot, stateRoot: head.stateRoot}, e);
+    });
+
     this.blockProcessor = new BlockProcessor(
       {
         clock,
@@ -186,7 +194,9 @@ export class BeaconChain implements IBeaconChain {
   }
 
   getHeadState(): CachedBeaconState<allForks.BeaconState> {
-    return this.regen.getHeadState();
+    const headState = this.regen.getHeadState();
+    if (!headState) throw Error("headState not available");
+    return headState;
   }
 
   async getHeadStateAtCurrentEpoch(): Promise<CachedBeaconState<allForks.BeaconState>> {

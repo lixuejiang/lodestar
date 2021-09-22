@@ -34,7 +34,7 @@ export class QueuedStateRegenerator implements IStateRegenerator {
   private checkpointStateCache: CheckpointStateCache;
   private metrics: IMetrics | null;
 
-  private headState: CachedBeaconState<allForks.BeaconState>;
+  private headState: CachedBeaconState<allForks.BeaconState> | null = null;
 
   constructor(modules: QueuedStateRegeneratorModules) {
     this.regen = new StateRegenerator(modules);
@@ -131,17 +131,19 @@ export class QueuedStateRegenerator implements IStateRegenerator {
     return this.jobQueue.push({key: "getState", args: [stateRoot, rCaller]});
   }
 
-  getHeadState(): CachedBeaconState<allForks.BeaconState> {
+  getHeadState(): CachedBeaconState<allForks.BeaconState> | null {
     return this.headState;
   }
 
-  async setHead(head: IProtoBlock): Promise<void> {
+  async setHead(head: IProtoBlock, potentialHeadState?: CachedBeaconState<allForks.BeaconState>): Promise<void> {
     const headState =
-      this.checkpointStateCache.getLatest(head.blockRoot, Infinity) || this.stateCache.get(head.stateRoot);
+      potentialHeadState && head.stateRoot === toHexString(potentialHeadState.hashTreeRoot())
+        ? potentialHeadState
+        : this.checkpointStateCache.getLatest(head.blockRoot, Infinity) || this.stateCache.get(head.stateRoot);
 
     // TODO: Use regen to get the state if not available
     // Almost always the headState should be in the cache since it should be from a block recently processed
-    if (!headState) throw Error("headState does not exist");
+    if (!headState) throw Error(`Head state slot ${head.slot} root ${head.stateRoot} not available in caches`);
 
     this.headState = headState;
   }

@@ -55,9 +55,15 @@ export interface IStateRegeneratorInternal {
  * Regenerates states that have already been processed by the fork choice
  */
 export interface IStateRegenerator extends IStateRegeneratorInternal {
-  getHeadState(): CachedBeaconState<allForks.BeaconState>;
+  getHeadState(): CachedBeaconState<allForks.BeaconState> | null;
 
-  setHead(head: IProtoBlock): Promise<void>;
+  /**
+   * Set head in regen to trigger updating the head state.
+   * Accepts an optional state parameter that may be the head for faster setting.
+   * Otherwise it will look in the cache or trigger regen. If regen requires async work, the head will not be available
+   * for some time, which can cause issues but will be resolved eventually.
+   */
+  setHead(head: IProtoBlock, potentialHeadState?: CachedBeaconState<allForks.BeaconState>): Promise<void>;
 
   /**
    * TEMP - To get justifiedBalances for the fork-choice.
