@@ -1,6 +1,7 @@
 import {allForks, phase0, Slot, RootHex} from "@chainsafe/lodestar-types";
 import {CachedBeaconState} from "@chainsafe/lodestar-beacon-state-transition";
 import {CheckpointHex} from "../stateCache";
+import {IProtoBlock} from "@chainsafe/lodestar-fork-choice";
 
 export enum RegenCaller {
   getDuties = "getDuties",
@@ -54,11 +55,21 @@ export interface IStateRegeneratorInternal {
  * Regenerates states that have already been processed by the fork choice
  */
 export interface IStateRegenerator extends IStateRegeneratorInternal {
+  getHeadState(): CachedBeaconState<allForks.BeaconState>;
+
+  setHead(head: IProtoBlock): Promise<void>;
+
   /**
    * TEMP - To get justifiedBalances for the fork-choice.
    * Get checkpoint state from memory cache doing no regen
    */
   getCheckpointStateSync(cp: CheckpointHex): CachedBeaconState<allForks.BeaconState> | null;
+
+  /**
+   * TEMP - To get states from API
+   * Get state from memory cache doing no regen
+   */
+  getStateSync(stateRoot: RootHex): CachedBeaconState<allForks.BeaconState> | null;
 
   /**
    * Add post to cache after verifying and importing block

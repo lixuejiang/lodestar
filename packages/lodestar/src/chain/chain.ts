@@ -58,8 +58,6 @@ export class BeaconChain implements IBeaconChain {
   forkChoice: IForkChoice;
   clock: IBeaconClock;
   emitter: ChainEventEmitter;
-  stateCache: StateContextCache;
-  checkpointStateCache: CheckpointStateCache;
   regen: IStateRegenerator;
   forkDigestContext: IForkDigestContext;
   lightclientUpdater: LightClientUpdater;
@@ -159,21 +157,17 @@ export class BeaconChain implements IBeaconChain {
     this.clock = clock;
     this.regen = regen;
     this.bls = bls;
-    this.checkpointStateCache = checkpointStateCache;
-    this.stateCache = stateCache;
     this.emitter = emitter;
 
     this.lightclientUpdater = new LightClientUpdater(this.db);
-    this.lightClientIniter = new LightClientIniter({config: this.config, forkChoice, db: this.db, stateCache});
-    this.archiver = new Archiver(db, this, logger, signal);
+    this.lightClientIniter = new LightClientIniter(config, db, forkChoice, regen);
+    this.archiver = new Archiver(db, forkChoice, checkpointStateCache, stateCache, emitter, logger, signal);
 
     handleChainEvents.bind(this)(this.abortController.signal);
   }
 
   close(): void {
     this.abortController.abort();
-    this.stateCache.clear();
-    this.checkpointStateCache.clear();
   }
 
   /** Populate in-memory caches with persisted data. Call at least once on startup */
@@ -192,12 +186,7 @@ export class BeaconChain implements IBeaconChain {
   }
 
   getHeadState(): CachedBeaconState<allForks.BeaconState> {
-    // head state should always exist
-    const head = this.forkChoice.getHead();
-    const headState =
-      this.checkpointStateCache.getLatest(head.blockRoot, Infinity) || this.stateCache.get(head.stateRoot);
-    if (!headState) throw Error("headState does not exist");
-    return headState;
+    return this.regen.getHeadState();
   }
 
   async getHeadStateAtCurrentEpoch(): Promise<CachedBeaconState<allForks.BeaconState>> {
