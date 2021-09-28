@@ -36,6 +36,9 @@ export class StateRegenerator implements IStateRegeneratorInternal {
    * Get the state to run with `block`. May be:
    * - If parent is in same epoch -> Exact state at `block.parentRoot`
    * - If parent is in prev epoch -> State after `block.parentRoot` dialed forward through epoch transition
+   *
+   * Used for:
+   * - Block verification (processBlock + processChainSegment)
    */
   async getPreState(
     block: allForks.BeaconBlock,
