@@ -4,6 +4,7 @@ import {CheckpointHex, CheckpointStateCache, StateContextCache} from "../stateCa
 import {IForkChoice, IProtoBlock} from "@chainsafe/lodestar-fork-choice";
 import {SLOTS_PER_EPOCH} from "@chainsafe/lodestar-params";
 import {toHexString} from "@chainsafe/ssz";
+import {IEpochShuffling} from "@chainsafe/lodestar-beacon-state-transition/lib/allForks";
 
 /* eslint-disable @typescript-eslint/no-non-null-assertion */
 
@@ -86,7 +87,7 @@ export interface IStateCacheRegen {
    *
    * Will never trigger replay, may trigger epoch transitions
    */
-  getHeadStateAtCurrentEpoch(): Promise<CachedBeaconState<allForks.BeaconState>>;
+  getHeadStateAtEpoch(): Promise<CachedBeaconState<allForks.BeaconState>>;
 
   /**
    * Returns the current head state dialed forward to slot, or a previous state if slot < head.slot.
@@ -175,7 +176,9 @@ export interface IStateCacheRegen {
 }
 
 type ProposerShuffling = ValidatorIndex[];
-type AttesterShuffling = ValidatorIndex[];
+type AttesterShuffling = IEpochShuffling;
+// TODO: Use a raw array
+// type AttesterShuffling = ValidatorIndex[];
 
 type ShufflingCheckpoint = {
   epoch: Epoch;
@@ -185,54 +188,100 @@ type ShufflingCheckpoint = {
 export class StateCacheRegen implements IStateCacheRegen {
   private head: IProtoBlock;
   private headState: CachedBeaconState<allForks.BeaconState>;
+  private headShufflingCheckpoint: ShufflingCheckpoint;
   private forkChoice: IForkChoice;
   private stateCache: StateContextCache;
   private checkpointStateCache: CheckpointStateCache;
 
+  getHeadState(): CachedBeaconState<allForks.BeaconState> {
+    return this.headState;
+  }
+
+  async getHeadStateAtEpoch(): Promise<CachedBeaconState<allForks.BeaconState>> {
+    //
+  }
+
   async getProposerShuffling(parentRoot: RootHex, blockSlot: Slot): Promise<ProposerShuffling> {
     // In most cases this block will be descendant of the head, return early
-    if (this.head.blockRoot === parentRoot) {
+    const blockEpoch = computeEpochAtSlot(blockSlot);
+    const headEpoch = computeEpochAtSlot(this.head.slot);
+    if (headEpoch === blockEpoch && this.head.blockRoot === parentRoot) {
       return this.headState.proposers;
     }
 
     // Otherwise, look for a state with the same shuffling checkpoint
     // else, trigger regen to get a state with shufflingCheckpoint
     const shufflingCheckpoint = getProposerShufflingCheckpoint(this.forkChoice, parentRoot, blockSlot);
-    return this.getStateWithShufflingCheckpoint(shufflingCheckpoint).proposers;
+    const shufflingState = await this.getStateWithShufflingCheckpoint(shufflingCheckpoint);
+    return shufflingState.proposers;
   }
 
+  /**
+   * epoch: 0       1       2       3       4
+   *        |-------|-------|-------|-------|
+   * attestation slot ---------^
+   *
+   * We need either:
+   * - state in epoch 1, next shuffling
+   * - state in epoch 2, curr shuffling
+   * - state in epoch 3, prev shuffling
+   */
   async getAttesterShuffling(target: phase0.Checkpoint): Promise<AttesterShuffling> {
     // In most cases the head state will include this attester shufflings, return early
-    const targetRootHex = toHexString(target.root);
     const headEpoch = computeEpochAtSlot(this.head.slot);
-    if (targetRootHex == this.head.targetRoot && target.epoch === headEpoch) {
+    const targetRootHex = toHexString(target.root);
+
+    // If the state is in the same epoch, compare target roots and return shufflings
+    if (target.epoch === headEpoch && targetRootHex == this.head.targetRoot) {
       return this.headState.currentShuffling;
     }
 
-    if (targetRootHex === this.head.prevTargetRoot && target.epoch === headEpoch - 1) {
+    // If it's in previous epoch, compare the cached previous target root
+    else if (target.epoch === headEpoch - 1 && targetRootHex === this.head.prevTargetRoot) {
       return this.headState.previousShuffling;
     }
 
     // Otherwise look for a state with the same shuffling checkpoint.
     // Note we can get next, curr, or prev shufflings from a state.
+    const shufflingCheckpointNext = getAttesterShufflingCheckpointNext(this.forkChoice, target);
+    const shufflingCheckpointCurr = getAttesterShufflingCheckpointCurr(this.forkChoice, target);
+
+    // TODO: Which one is better to use? current or next
+    const useNext = true;
+    if (useNext) {
+      const shufflingState = await this.getStateWithShufflingCheckpoint(shufflingCheckpointNext);
+      return shufflingState.nextShuffling;
+    } else {
+      const shufflingState = await this.getStateWithShufflingCheckpoint(shufflingCheckpointCurr);
+      return shufflingState.currentShuffling;
+    }
   }
 
   private async getStateWithShufflingCheckpoint(
     shufflingCheckpoint: ShufflingCheckpoint
-  ): CachedBeaconState<allForks.BeaconState> {}
+  ): Promise<CachedBeaconState<allForks.BeaconState>> {
+    this.headShufflingCheckpoint.
+  }
 }
 
 /**
  * Return the ShufflingCheckpoint that decides the attester shuffling for a target checkpoint:
  * - The last block of -2 epochs of target.epoch
  */
-function getAttesterShufflingCheckpoint(forkChoice: IForkChoice, target: phase0.Checkpoint): ShufflingCheckpoint {
+function getAttesterShufflingCheckpointNext(forkChoice: IForkChoice, target: phase0.Checkpoint): ShufflingCheckpoint {
   const epoch = target.epoch;
   const block = forkChoice.getBlock(target.root)!;
   const epochM1LastBlock = forkChoice.getBlockHex(block.parentRoot)!;
   const epochM1Target = forkChoice.getBlockHex(epochM1LastBlock.targetRoot)!;
   const epochM2TLastBlock = forkChoice.getBlockHex(epochM1Target.parentRoot)!;
   return {dependantRoot: epochM2TLastBlock.blockRoot, epoch: epoch - 1};
+}
+
+function getAttesterShufflingCheckpointCurr(forkChoice: IForkChoice, target: phase0.Checkpoint): ShufflingCheckpoint {
+  const epoch = target.epoch;
+  const block = forkChoice.getBlock(target.root)!;
+  const epochM1LastBlock = forkChoice.getBlockHex(block.parentRoot)!;
+  return {dependantRoot: epochM1LastBlock.blockRoot, epoch};
 }
 
 /**
